@@ -11,7 +11,7 @@ To use these skills in your own projects—especially to enhance AI assistants l
 The `looker_embed_skills` CLI is a tool used to install and manage specialized instructions (skills) for AI agents in your workspace. 
 
 ```bash
-npx @brettguenther/looker-embed-skills
+npx skills add brettguenther/looker-embed-skills
 ```
 
 ## Core Embedding Skills
