@@ -1,6 +1,6 @@
 ---
 name: sso-embed
-description: Use this skill when you need to set up, implement, or troubleshoot Looker SSO (signed) or Cookieless embedding using the Looker Embed SDK.
+description: This skill allows agents to assist users in setting up, implementing, and troubleshooting Looker SSO (signed) and Cookieless embedding using the Looker Embed SDK.
 ---
 
 # Looker SSO Embed Skill
@@ -99,6 +99,42 @@ def create_signed_url(src, user, host, secret):
     # Final URL construction includes all params + signature
 ```
 
+## 2.1 Alternate Approach: Using Looker API (`create_sso_embed_url`)
+Instead of manually constructing and signing the URL, you can use the Looker API endpoint `create_sso_embed_url` via the Looker Python SDK. This avoids manual signature generation errors.
+
+### Example Python Implementation:
+```python
+import looker_sdk
+from looker_sdk import models40 as models
+
+# Initialize SDK (ensure LOOKERSDK_BASE_URL, LOOKERSDK_CLIENT_ID, LOOKERSDK_CLIENT_SECRET are set)
+sdk = looker_sdk.init40()
+
+def get_embed_url(src: str):
+    base_url = os.environ.get("LOOKER_BASE_URL")
+    target_url = f"{base_url}{src}"
+    
+    try:
+        response = sdk.create_sso_embed_url(
+            body=models.EmbedSsoParams(
+                target_url=target_url,
+                session_length=3600,
+                external_user_id="user_1",
+                permissions=["access_data", "see_user_dashboards", "see_lookml_dashboards"],
+                models=["basic_ecomm"],
+                group_ids=["22"],
+                external_group_id="",
+                user_attributes={},
+                # Note: access_filters might not be supported as a keyword argument in some SDK versions
+                force_logout_login=False,
+            )
+        )
+        return response.url
+    except Exception as e:
+        print(f"Error: {e}")
+        return None
+```
+
 ## 3. Cookieless Embedding
 Cookieless embedding requires two backend endpoints to manage sessions and tokens.
 1. **Acquire Session**: Calls `acquire_embed_cookieless_session` API. Returns tokens (except `session_reference_token` which must be kept server-side).
@@ -112,6 +148,8 @@ Cookieless embedding requires two backend endpoints to manage sessions and token
 
 ## 5. Troubleshooting
 - **Invalid Signature**: Most common issue. Verify parameter order, JSON stringification (especially empty objects/arrays), and encoding.
+- **SDK Model Mismatch**: `EmbedSsoParams` might not accept `access_filters` as a keyword argument in some SDK versions (e.g., `EmbedSsoParams.__init__() got an unexpected keyword argument 'access_filters'`), even if documented. Try omitting it if it's empty.
+- **Signature Quirks**: In manual signing, the string `/login/embed/` may need to appear in BOTH line 1 (Host + `/login/embed/`) and line 2 (Path) of the string to sign, depending on the example followed.
 - **Third-Party Cookies**: If using SSO without vanity domains, browsers like Safari will block cookies. Use **Cookieless Embed** or **Vanity Domains** to resolve.
 - **Domain Allowlist**: Ensure the host domain is in **Admin > Embed > Embedded Domain Allowlist**.
 - **Whale/401 Errors**: Check if the Looker user has the `access_data` permission and access to the specified `models`.

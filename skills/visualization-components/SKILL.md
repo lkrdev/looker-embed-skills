@@ -1,6 +1,6 @@
 ---
 name: visualization-components
-description: Use this skill when you need to build custom, high-performance data experiences using Looker's React-based visualization components.
+description: This skill enables agents to assist users in building custom, high-performance data experiences using Looker's React-based visualization components.
 ---
 
 # Looker Visualization Components
