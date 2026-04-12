@@ -170,3 +170,90 @@ Using a YAML template for `system_instruction` is highly recommended to guide th
 - **Permission Denied**: Check Google Cloud IAM roles and Looker `gemini_in_looker` permissions.
 - **Low Accuracy**: Refine `system_instruction` or add more `looker_golden_queries`.
 - **Connection Errors**: Verify `looker_instance_uri` and ensure network connectivity (e.g., PSC/VPC-SC).
+
+## 8. Processing the API Response
+
+The Gemini Data Analytics API streams responses as structured messages. The response object contains a `systemMessage` field, which can hold different types of content as the conversation progresses.
+
+### API Response Structure
+
+The `systemMessage` typically contains one of the following:
+
+#### 1. Text Messages (`systemMessage.text`)
+Used for thoughts, progress updates, and the final response.
+- `parts`: An array of strings containing the message content.
+- `textType`: An enum indicating the type of text:
+    - `THOUGHT`: The agent's reasoning process.
+    - `PROGRESS`: Background steps being taken (e.g., "Fetching data").
+    - `FINAL_RESPONSE`: The final answer to the user's question.
+
+> [!TIP]
+> To improve UI readability, it is recommended to group sequential `THOUGHT` and `PROGRESS` messages in the UI to avoid clutter.
+
+#### 2. Data Messages (`systemMessage.data`)
+Used to return query definitions and data results.
+
+##### A. Query Reference
+When the agent determines a query to run, it emits a `query` object:
+```json
+{
+  "query": {
+    "name": "top_selling_products",
+    "looker": {
+      "model": "basic_ecomm",
+      "explore": "basic_order_items",
+      "fields": ["basic_products.name", "basic_order_items.count"],
+      "sorts": ["basic_order_items.count desc"],
+      "limit": "10",
+      "filters": [
+        {
+          "field": "basic_users.state",
+          "value": "California"
+        }
+      ]
+    }
+  }
+}
+```
+> [!IMPORTANT]
+> Note that `filters` is an **Array of objects** (with `field` or `name` and `value` properties). When generating Looker Explore URLs from this data, ensure you iterate over the array and construct the URL parameters as `&f[field_name]=value`.
+
+##### B. Data Results
+When the query completes, the agent emits the result data:
+```json
+{
+  "result": {
+    "data": [
+      {
+        "basic_products.name": "Product A",
+        "basic_order_items.count": 5.0
+      }
+    ],
+    "name": "top_selling_products",
+    "schema": {
+      "fields": [
+        {
+          "name": "basic_products.name",
+          "type": "string",
+          "displayName": "Name"
+        },
+        {
+          "name": "basic_order_items.count",
+          "type": "count",
+          "displayName": "# of Order Items",
+          "value_format": "$#,##0.00"
+        }
+      ]
+    }
+  }
+}
+```
+
+#### 3. Chart Messages (`systemMessage.chart`)
+Contains visualization configurations.
+- `vegaConfig`: A JSON object with the Vega-Lite specification for rendering the chart.
+- `image`: May contain a generated PNG image of the chart.
+
+### Data Processing Best Practices
+- **Schema-aware Formatting**: The `schema.fields` array in the data result may contain `value_format` strings (e.g., for currency or percentages). Production applications should use these format strings to render table values correctly.
+- **Heuristic Fallback**: If `value_format` is missing, fall back to checking the field name for keywords like `"price"`, `"revenue"`, or `"cost"` to apply currency formatting.

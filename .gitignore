@@ -1,8 +1,6 @@
 .gitmodules
 GEMINI.md
 Makefile
-TODO.md
-BLOG.md
 scripts
 tmp
 node_modules
