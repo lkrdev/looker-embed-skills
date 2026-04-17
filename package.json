@@ -1,5 +1,5 @@
 {
-  "name": "@brettguenther/looker-embed-skills",
+  "name": "@lkr-dev/looker-embed-skills",
   "version": "0.1.0",
   "bin": {
     "looker_embed_skills": "bin/index.js"
@@ -10,11 +10,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/brettguenther/looker-embed-skills.git"
+    "url": "git+https://github.com/lkrdev/looker-embed-skills.git"
   },
   "description": "This repository contains a collection of \"skills\" designed to assist AI agents and developers in implementing Looker embedding. Each skill encapsulates specific instructions, best practices, and examples for different aspects of Looker embedding, including SSO, Cookieless, and Visualization Components.",
   "keywords": [],
   "author": "Brett Guenther",
+  "publisher": "lkr-dev",
   "license": "ISC",
   "dependencies": {
     "diff": "^5.0.0",

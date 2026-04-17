@@ -9,7 +9,7 @@ To use these skills in your own projects—especially to enhance AI assistants l
 ### Installation via CLI
 
 ```bash
-npx skills add brettguenther/looker-embed-skills
+npx skills add lkrdev/looker-embed-skills
 ```
 
 ## Available Skills
