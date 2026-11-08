@@ -130,3 +130,42 @@ dashboard.sendAndReceive('dashboard:options')
 - **JSON Parsing**: Older Looker versions might send stringified JSON, while newer ones might send objects. Use a robust parser.
 - **Cancellable Events**: Events like `dashboard:tile:view` can be cancelled by returning `{ cancel: true }` in some SDK implementations to override default behavior.
 - **Race Conditions**: Ensure the iframe has sent `page:changed` or a similar "ready" event before sending the first action.
+
+## 6. Cross-Dashboard Drill ("Jump to Dashboard") & Route Synchronization
+
+### Pattern A: LookML `link:` with Comma-Safe Filter Escaping
+To let users click a dimension or measure cell in a primary dashboard and jump to a secondary deep-dive dashboard while forwarding both the clicked cell value and active parent dashboard filters, use the LookML `link:` parameter with Liquid templating:
+
+```lookml
+dimension: customer_region {
+  type: string
+  sql: ${TABLE}.customer_region ;;
+
+  link: {
+    label: "Jump to Regional Deep Dive"
+    url: "/embed/dashboards/450?Region={{ filterable_value | url_encode }}&Order+Date={{ _filters['orders.created_date'] | url_encode }}"
+  }
+}
+```
+- **Comma-Safe Interpolation (`filterable_value` vs `value`)**: Always use `{{ filterable_value | url_encode }}` when string values may contain literal commas (e.g., `"Smith, Inc."`) so Looker escapes the comma (`Smith\, Inc.`) instead of splitting the target dashboard filter into multiple `OR` criteria.
+
+### Pattern B: Intercepting Tile Drills in Host Application Modals / Drawers
+To open drill or explore actions inside a host application modal or slide-over drawer rather than navigating the primary iframe in place, return `{ cancel: true }` from the cancellable Embed SDK event listener and mount a secondary connection in your modal container:
+
+```javascript
+LookerEmbedSDK.createDashboardWithId(100)
+  .appendTo('#primary-canvas')
+  .on('dashboard:tile:explore', (event) => {
+    openHostDrillDrawer(event.url); // Mount secondary iframe at event.url
+    return { cancel: true };
+  })
+  .on('dashboard:tile:view', (event) => {
+    openHostDrillDrawer(event.url);
+    return { cancel: true };
+  })
+  .build()
+  .connect();
+```
+
+### Pattern C: Bidirectional URL & Filter State Sync
+When embedding a dashboard inside a host SPA or a standalone Looker Extension split-workspace layout, listen for `dashboard:filters:update` and `page:changed` to synchronize the active dashboard ID and filter map with the host URL query string (or `extensionSDK.clientRouteChanged` inside a Looker Extension) so browser refreshes and shared deep links preserve the user's filter state.

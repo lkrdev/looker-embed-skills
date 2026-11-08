@@ -98,3 +98,35 @@ During streaming, ensure the output is compatible with the target interface:
 - **Streaming Interruption**: Check if intermediate proxies or gateways support long-lived HTTP/2 streams.
 - **State Mismatch**: Verify that the keys used in `run_when` match exactly what is set by the primary agent.
 - **Permission Errors**: Ensure the service account has both `roles/geminidataanalytics.user` and Looker `access_data` permissions.
+
+## 7. Modern ADK `App` Packaging & Gemini Enterprise OAuth Token Injection
+
+### Wrapping Agents in `google.adk.apps.App` with `ResumabilityConfig`
+For production deployments on Vertex AI Agent Engine or Cloud Run, wrap your root agent in `google.adk.apps.App` with `ResumabilityConfig(is_resumable=True)` and use explicit `temp:` (turn-scoped) vs `user:` (cross-session) state prefixes:
+
+```python
+from google.adk.apps import App, ResumabilityConfig
+
+app = App(
+    name="looker_ca_streaming_app",
+    root_agent=root_agent,
+    resumability_config=ResumabilityConfig(is_resumable=True),
+)
+```
+
+> **Latency Optimization for Single-Agent Wrappers**: If your ADK application only queries a single Looker Conversational Analytics agent without multi-domain tool routing, subclass `BaseAgent` (model-free pass-through) rather than wrapping `DataChatServiceClient` inside an outer `LlmAgent` tool—this eliminates a redundant outer LLM invocation (saving 2–4 seconds per turn).
+
+### Extracting Injected Looker OAuth Tokens in Gemini Enterprise
+When registered in Gemini Enterprise with a Looker OAuth 2.0 PKCE authorization resource (`AUTH_ID`), Gemini Enterprise automatically injects the end user's Looker OAuth `access_token` into `context.session.state[AUTH_ID]`. Extract it dynamically with a fallback to Looker API client credentials for local testing:
+
+```python
+def resolve_looker_credentials(context: InvocationContext, auth_id: str) -> geminidataanalytics.Credentials:
+    creds = geminidataanalytics.Credentials()
+    user_token = context.session.state.get(auth_id)
+    if user_token:
+        creds.oauth.access.access_token = user_token
+    else:
+        creds.oauth.secret.client_id = os.environ["LOOKERSDK_CLIENT_ID"]
+        creds.oauth.secret.client_secret = os.environ["LOOKERSDK_CLIENT_SECRET"]
+    return creds
+```

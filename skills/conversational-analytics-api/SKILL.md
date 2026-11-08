@@ -257,3 +257,27 @@ Contains visualization configurations.
 ### Data Processing Best Practices
 - **Schema-aware Formatting**: The `schema.fields` array in the data result may contain `value_format` strings (e.g., for currency or percentages). Production applications should use these format strings to render table values correctly.
 - **Heuristic Fallback**: If `value_format` is missing, fall back to checking the field name for keywords like `"price"`, `"revenue"`, or `"cost"` to apply currency formatting.
+
+## 9. Regional Endpoint Control & Direct Gemini Enterprise A2A Registration
+
+### Explicit Multi-Regional Endpoint Routing (`geminidataanalytics.{us,eu}.rep.googleapis.com`)
+When a Looker (Google Cloud core) instance is hosted in a region where Looker's internal Conversational Analytics proxy is not locally enabled (for example, `australia-southeast1`), you can connect directly to the **US or EU Regional Endpoint** using `google.api_core.client_options.ClientOptions`:
+
+```python
+from google.api_core.client_options import ClientOptions
+from google.cloud import geminidataanalytics_v1beta as geminidataanalytics
+
+# Route explicitly to the US multi-regional endpoint
+client_options = ClientOptions(api_endpoint="geminidataanalytics.us.rep.googleapis.com")
+data_agent_client = geminidataanalytics.DataAgentServiceClient(client_options=client_options)
+data_chat_client = geminidataanalytics.DataChatServiceClient(client_options=client_options)
+
+# Use locations/us (or locations/eu with geminidataanalytics.eu.rep.googleapis.com)
+PARENT = f"projects/{PROJECT_ID}/locations/us"
+```
+
+### Zero-Runtime Direct A2A Registration into Gemini Enterprise
+Curated Looker agents can be mirrored into the Gemini Data Analytics API as stateful `DataAgent` resources and registered directly into **Gemini Enterprise (Discovery Engine)** without deploying any custom Cloud Run or Vertex AI Reasoning Engine runtime containers:
+1. Create or update the `DataAgent` resource under `projects/<PROJECT_ID>/locations/us` pointing to your Looker instance's `LookerExploreReference`.
+2. Fetch the agent's native Agent-to-Agent (A2A) card from `GET https://geminidataanalytics.us.rep.googleapis.com/v1beta/projects/<PROJECT_ID>/locations/us/dataAgents/<AGENT_ID>/v1/card` (which natively declares the `https://www.googleapis.com/gemini-enterprise/a2a/extensions/authorizations/v1` extension).
+3. Register the card into Gemini Enterprise using `a2aAgentDefinition.jsonAgentCard` bound to a Looker OAuth 2.0 PKCE authorization resource (`/auth` and `/api/token`). When a user chats in Gemini Enterprise, Gemini Enterprise injects the user's Looker OAuth token directly into the A2A request metadata and authenticates the GCP API call via `service-<PROJECT_NUM>@gcp-sa-discoveryengine.iam.gserviceaccount.com` (`roles/geminidataanalytics.dataAgentUser`).

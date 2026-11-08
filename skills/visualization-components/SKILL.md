@@ -96,3 +96,9 @@ const CustomTable = ({ data, fields }) => {
 - **Theme Errors**: Visualization components require a `ThemeProvider`. If not provided by the app, they will automatically wrap themselves in a `ComponentsProvider` (Looker's default theme).
 - **Date Measures**: Measures of type `date` are currently not supported in standard visualization components.
 - **Missing Peer Deps**: Ensure `styled-components` version is `^5.3.1` or higher to avoid context mismatches.
+
+## 8. React 19 Compatibility & Headless Live-Query Canvas Pattern
+
+- **React 17/18 Peer Dependency Constraint**: `@looker/visualizations` and `@looker/components` declare peer dependencies on React 17/18 and `styled-components@^5`.
+- **Headless Query Execution for React 19+ Applications**: In React 19+ applications (or lightweight AI-generated reporting canvases), bypass `@looker/components` and execute governed semantic queries directly via `@looker/sdk` (`sdk.run_inline_query({ result_format: 'json', body: writeQuery })`), binding the returned JSON rows and field metadata to modern chart libraries (Recharts, Vega-Lite, Highcharts, or Tailwind KPI grids).
+- **Sandboxed `postMessage` Query Bridge for Dynamic Canvases**: When rendering untrusted or LLM-generated HTML/React report views inside a sandboxed iframe, keep the Looker SDK session strictly in the parent host shell and expose a narrow `window.addEventListener('message')` bridge (`LOOKER_RUN_QUERY` -> `sdk.run_inline_query` -> `LOOKER_QUERY_RESULT`) so child frames never access raw Looker tokens.

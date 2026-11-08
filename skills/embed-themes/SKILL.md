@@ -14,6 +14,10 @@ Looker themes allow you to control the styling of embedded and internal Looker c
 - **Set Default Themes**: Programmatically change the global default theme.
 - **Manage Color Collections**: Associate custom color palettes with themes.
 
+> [!NOTE]
+> **Brand Styling Discovery Prompt**: When assisting a user in creating or configuring embed themes (both Light and Dark modes), **always add a prompt asking the user for a URL to the website of the company to pull theme and styling for, along with any screenshots or other brand details** (such as brand style guides, logo assets, or custom typography preferences). Use this visual inspiration to extract authentic brand color collections and apply appropriate contrast and accents across Light and Dark embed themes.
+
+
 ## 1. Prerequisites
 - **API Version**: Use Looker API 4.0 for the most up-to-date theme features.
 - **Permissions**: Requires `admin` or `manage_themes` permissions.
@@ -46,7 +50,7 @@ new_theme = sdk.create_theme(
             show_title=True,
             tile_background_color="#FFFFFF",
             title_color="#172B4D",
-            show_header=True
+            show_dashboard_header=True
         )
     )
 )
@@ -87,7 +91,7 @@ sdk.set_default_theme(theme_name="corporate_brand_v1")
 | `title_color` | string | Color of the dashboard title text. |
 | `font_family` | string | Primary font for text elements. |
 | `color_collection_id` | string | ID of the color palette for visualizations. |
-| `show_header` | boolean | Toggle the visibility of the dashboard header. |
+| `show_dashboard_header` | boolean | Toggle the visibility of the dashboard header. |
 | `show_title` | boolean | Toggle the visibility of the dashboard title. |
 | `primary_button_color` | string | Color of primary buttons and accents. |
 | `warn_button_color` | string | Color of warning/danger buttons. |
@@ -167,5 +171,124 @@ Here is a comprehensive JSON payload for creating a theme, including extended se
 - **Active Status**: Only "active" themes can be set as defaults or used in embedding.
 - **Unique Names**: Theme names must be unique across the instance.
 - **Color Collections**: Ensure the `color_collection_id` exists before associating it with a theme, otherwise it will fallback to the system default.
+- **LookML Color Override Removal**: Static colors hardcoded inside LookML dashboards (`series_colors`, `text_color`, `embed_style` colors) always take priority over runtime embed themes. Always strip these hardcoded color mappings from LookML files so embedded content dynamically inherits the active theme's palette.
 - **Expiration**: Themes with an `end_at` value will automatically deactivate. For permanent themes, ensure `end_at` is `None` or null.
 - **API Cache**: When updating a theme, changes may take a few seconds to propagate to all cached dashboard views.
+
+## 7. Multi-Tenant Dynamic Brand Theme Pattern
+
+Multi-tenant embed portals often map each tenant or brand profile to a dedicated pair of Looker Light/Dark themes (`<Brand>_Light` and `<Brand>_Dark`).
+
+### Naming Convention & Brand Sanitization
+Looker theme names only support alphanumeric characters and underscores. When resolving theme names from brand or tenant strings, convert spaces to underscores and strip all non-alphanumeric characters (except underscores) via `sanitizeBrandName(brand)`.
+
+For every tenant or brand configured in your host application, provision a matching `<clean_brand>_Light` and `<clean_brand>_Dark` theme pair in Looker:
+- `Acme Corp` -> `Acme_Corp_Light` / `Acme_Corp_Dark`
+- `Global Retail` -> `Global_Retail_Light` / `Global_Retail_Dark`
+
+### Runtime Resolution & Fallback
+The frontend application dynamically sanitizes the selected tenant/brand and resolves the active theme (e.g., `Acme_Corp_Light` or `Acme_Corp_Dark`) via `.withTheme(themeName)` or `?theme=<themeName>`. If a specific brand theme is not defined, fall back to a default instance theme (e.g., `Embed_Default_Light` / `Embed_Default_Dark`).
+
+### LookML Dashboard Color Inheritance (Style-Agnostic Authoring)
+In Looker, hardcoded colors specified inside LookML files always take priority over runtime embed themes (`?theme=...`). Specifically:
+- Any `series_colors`, `color_application`, `color_palette`, `custom_colors`, or `totals_color` defined on a visualization tile overrides the theme's color collection.
+- Any `text_color` on a `single_value` KPI tile overrides the theme font/primary button color.
+- Any `background_color`, `title_color`, or `tile_text_color` inside `embed_style:` overrides the theme container styling.
+
+**Best Practice:** To ensure embedded dashboards dynamically inherit the active tenant's color palette and background theme, **strip all hardcoded color overrides from LookML dashboard definitions (`.dashboard.lookml`)**. When these attributes are removed, Looker automatically applies the coordinating palette from the active theme's `color_collection_id`.
+
+### Automated Provisioning of Color Palettes & Themes via `looker-cli`
+When running setup or onboarding scripts, use the `looker-cli` to automatically provision brand-specific color palettes (Color Collections) and attach them to the corresponding Looker embed themes.
+
+#### Step 1: Create or Update Color Collections
+Check existing custom color collections using `color_collections_custom`:
+```bash
+looker-cli api colorcollection color_collections_custom --token-file --fields "id,label"
+```
+Pass the palette definitions via stdin (`-`) to create or update them:
+```bash
+# Create a new color collection
+cat palette.json | looker-cli api colorcollection create_color_collection - --token-file
+
+# Update an existing color collection by ID
+cat palette.json | looker-cli api colorcollection update_color_collection levis - --token-file
+```
+
+#### Step 2: Create or Update Brand Themes
+Check existing themes:
+```bash
+looker-cli api theme all_themes --token-file --fields "id,name"
+```
+Pass the JSON definition via stdin (`-`), setting `color_collection_id` to the ID returned from Step 1:
+```bash
+cat theme.json | looker-cli api theme create_theme - --token-file
+cat theme.json | looker-cli api theme update_theme 12 - --token-file
+```
+
+#### Python Automation Snippet
+You can automate the idempotency loop for both color collections and themes across all configured tenant brands:
+
+```python
+import json, re, subprocess
+
+brands = ["Acme Corp", "Global Retail", "Apex Financial"]
+
+def sanitize(brand):
+    return re.sub(r'[^a-zA-Z0-9_]', '', re.sub(r'\s+', '_', brand))
+
+# 1. Fetch existing custom color collections
+stdout_cols = subprocess.check_output(["looker-cli", "api", "colorcollection", "color_collections_custom", "--token-file"])
+col_map = {c["label"]: c["id"] for c in json.loads(stdout_cols)}
+
+brand_col_ids = {}
+for brand in brands:
+    clean = sanitize(brand)
+    colors = ["#0052CC", "#2A9D8F", "#E76F51", "#9D4EDD", "#3A86FF"]
+    palette_payload = json.dumps({
+        "label": clean,
+        "categoricalPalettes": [{"label": f"{clean} Categorical", "type": "Categorical", "colors": colors}]
+    })
+    if clean in col_map:
+        col_id = col_map[clean]
+        subprocess.run(["looker-cli", "api", "colorcollection", "update_color_collection", str(col_id), "-", "--token-file"], input=palette_payload, text=True)
+        brand_col_ids[clean] = col_id
+    else:
+        res = subprocess.run(["looker-cli", "api", "colorcollection", "create_color_collection", "-", "--token-file"], input=palette_payload, text=True, capture_output=True)
+        brand_col_ids[clean] = json.loads(res.stdout).get("id")
+
+# 2. Fetch existing theme name -> ID map
+stdout_themes = subprocess.check_output(["looker-cli", "api", "theme", "all_themes", "--token-file"])
+theme_map = {t["name"]: t["id"] for t in json.loads(stdout_themes)}
+
+# 3. Iterate brands and modes to create/update themes attached to color palettes
+for brand in brands:
+    clean = sanitize(brand)
+    col_id = brand_col_ids.get(clean, "embed-default")
+    for mode in ["Light", "Dark"]:
+        name = f"{clean}_{mode}"
+        payload = json.dumps({
+            "name": name,
+            "settings": {
+                "background_color": "#f0f4f9" if mode == "Light" else "#131314",
+                "tile_background_color": "#ffffff" if mode == "Light" else "#1e1f20",
+                "color_collection_id": col_id,
+                "font_family": "'Inter', system-ui, sans-serif",
+                "base_font_size": "14px",
+                "border_radius": "12px",
+                "tile_shadow": True,
+                "tile_title_alignment": "left",
+                # Explicitly populate all boolean indicator fields to prevent Looker 26.x 422 errors on unset fields
+                "show_last_updated_indicator": True,
+                "show_reload_data_icon": True,
+                "show_dashboard_menu": True,
+                "show_filters_toggle": True,
+                "show_filters_bar": True,
+                "show_title": True,
+                "show_dashboard_header": True
+            }
+        })
+        if name in theme_map:
+            subprocess.run(["looker-cli", "api", "theme", "update_theme", str(theme_map[name]), "-", "--token-file"], input=payload, text=True)
+        else:
+            subprocess.run(["looker-cli", "api", "theme", "create_theme", "-", "--token-file"], input=payload, text=True)
+```

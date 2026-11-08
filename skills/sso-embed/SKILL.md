@@ -154,3 +154,24 @@ Cookieless embedding requires two backend endpoints to manage sessions and token
 - **Domain Allowlist**: Ensure the host domain is in **Admin > Embed > Embedded Domain Allowlist**.
 - **Whale/401 Errors**: Check if the Looker user has the `access_data` permission and access to the specified `models`.
 - **SDK Logging**: Enable in browser console with `localStorage.debug = 'looker:chatty:*'`.
+
+## 6. Looker (Google Cloud Core) Identity & Edition Guardrails
+
+1. **`login_user` & `sudo` Restrictions on Non-Embed Editions**:
+   - On Looker (Google Cloud core) **Standard** and **Enterprise** editions, interactive `sudo` and calling `POST /api/4.0/login/{user_id}` (`login_user`) for regular human users are permanently disabled (`403 Forbidden`) to enforce Google Cloud Audit Logging (`cloudaudit.googleapis.com`) non-repudiation.
+   - `login_user` remains permitted only when the target user is an **Embed user** (`is_embed? == true`) or an **API-only Looker Service Account** (`is_service_account == true`).
+2. **Backend Minting Identity (`create_sso_embed_url` vs `create_embed_url_as_me`)**:
+   - Always authenticate your backend embed minting service using an **API-only Looker Service Account** and call `POST /api/4.0/embed/sso_url` (`create_sso_embed_url`) or `POST /api/4.0/embed/cookieless_session/acquire` (`acquire_embed_cookieless_session`).
+   - Do **not** use `POST /api/4.0/embed/token_url/me` (`create_embed_url_as_me`) with a Service Account; `create_embed_url_as_me` is designed strictly for human user OAuth 2.0 PKCE (`cors_api`) sessions.
+3. **Deprecation of `access_filters` in `EmbedSsoParams`**:
+   - The legacy `access_filters` parameter in `create_sso_embed_url` is deprecated. Always pass tenant/row-level attributes via `user_attributes: {"tenant_id": "acme"}` and bind them in LookML via `access_filter: { field: view.column user_attribute: tenant_id }`.
+
+## 7. Single-Consumption `/login/embed` Token & Shared Cache Gotchas
+
+1. **Single-Consumption `/login/embed` Nonce Cache**:
+   - Signed SSO embed URLs (`/login/embed/…`) use a **single-consumption server-side nonce cache** (60-second TTL by default, or 5-minute TTL for `create_embed_url_as_me`).
+   - **React `StrictMode` Double Mounts**: In React 18/19 development mode, double-invoking `useEffect` with the same signed SSO URL consumes the nonce on the first mount and fails with `401/403` on the second mount. Either use **Cookieless Embedding** (`connectCookieless`) or guard the `create_sso_embed_url` fetch with an in-flight ref.
+   - **Chat / Email Link-Preview Crawlers**: Never send raw signed `/login/embed/…` URLs in Slack, Microsoft Teams, or email notifications—link-preview bots prefetch the URL (`GET` or `HEAD`), consuming the nonce before the user clicks it. Link to your host application route instead and mint the Looker embed session only after browser JavaScript executes.
+2. **Shared Query Cache Bypass with Data Warehouse Policy Tags / Dynamic Masking**:
+   - Looker's query cache key hashes the generated SQL string and connection name, **not** external Data Warehouse OAuth user identities or BigQuery Column-Level Policy Tags / Dynamic Data Masking rules.
+   - If two embedded users with different BigQuery Policy Tag / Dynamic Masking clearances execute identical SQL against a shared cache, Looker can serve cached unmasked results from the privileged user to the masked user unless you disable caching (`persist_for: "0 seconds"` on the model/explore) or inject the user's clearance attribute into the SQL (`sql_always_where: 1=1 -- {{ _user_attributes['clearance_tier'] }} ;;`).

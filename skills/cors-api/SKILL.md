@@ -1,56 +1,87 @@
 ---
 name: cors-api
-description: Architectural pattern for direct browser-to-Looker API calls via CORS using OAuth2 with PKCE for secure client-side authentication.
+description: Architectural pattern, TypeScript SDK integration, and implementation standards for direct browser-to-Looker API calls via CORS using OAuth 2.0 with PKCE.
 ---
 
-# Looker CORS API OAuth Pattern (Direct Browser Auth)
+# Looker CORS API & OAuth 2.0 PKCE Pattern
 
-This skill describes the **Direct Browser OAuth** pattern for Looker. It allows frontend applications to authenticate users directly against a Looker instance and make secure API calls via CORS without requiring a custom backend proxy.
+This skill provides architectural standards, TypeScript SDK integration patterns, and best practices for building client-side data applications that communicate directly with the Looker API via **CORS** and **OAuth 2.0 with PKCE (Proof Key for Code Exchange)**.
 
-## 1. The Core Pattern
+---
 
-The pattern leverages Looker's built-in OAuth2 support with **PKCE (Proof Key for Code Exchange)** to safely perform the authentication flow entirely in the browser.
+## 1. Architectural Overview
 
-### Architectural Components
-1.  **Browser Application**: The frontend app that performs the OAuth flow and makes direct `fetch` calls to the Looker API.
-2.  **Looker Auth Server**: Handles user login, consent, and issues access tokens.
-3.  **Looker API**: Serves data directly to the browser via CORS.
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Browser Application (React / Vue / TypeScript)           │
+│    • Handles OAuth 2.0 PKCE challenge generation            │
+│    • Stores access tokens in sessionStorage via SDK session │
+│    • Executes queries directly via @looker/sdk              │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ CORS Bearer Token Requests
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 2. Looker Instance (API 4.0 & Auth Server)                  │
+│    • /auth -> User login & consent dialog                   │
+│    • /api/token -> PKCE verification & token issuance       │
+│    • /api/4.0/queries/run/json -> Governed query execution  │
+│    • Enforces User Permissions, RLS, & LookML Caching       │
+└─────────────────────────────────────────────────────────────┘
+```
 
-## 2. The OAuth2 + PKCE Flow
+### Key Advantages:
+* **Zero Backend**: Eliminates custom API proxies or backend token vaults.
+* **Public Client Security**: PKCE removes the need for client secrets in the browser.
+* **Governed Data Access**: Inherits the logged-in user's exact permissions, access filters, and user attributes.
 
-Because a browser application is a "public client" and cannot store secrets, PKCE is used to secure the authorization code exchange.
+---
 
-1.  **Code Challenge Generation**: The app generates a cryptographically random `code_verifier` and its SHA-256 hash, the `code_challenge`.
-2.  **Redirect to Looker**: The app redirects the user to Looker's `/auth` endpoint with parameters:
-    *   `client_id`: The registered Looker OAuth Client ID.
-    *   `redirect_uri`: The app's callback URL.
-    *   `code_challenge`: The hashed verifier.
-    *   `scope`: Typically `cors_api`.
-3.  **User Consent**: The user logs into Looker and approves the application's request for access.
-4.  **Authorization Code**: Looker redirects back to the `redirect_uri` with an `authorization_code`.
-5.  **Token Exchange**: The app sends the `authorization_code` and the original `code_verifier` to Looker's `/api/token` endpoint.
-6.  **Direct API Access**: Looker validates the verifier and issues an `access_token`. The app uses this token in the `Authorization: Bearer` header for all subsequent API calls.
+## 2. Prerequisites & Configuration Checklist
 
-## 3. Implementation Requirements
+Before initiating OAuth flows, verify these 4 instance settings:
 
-### Looker Configuration (Critical)
--   **OAuth Application Registration**: The application must be registered in Looker (via API or Admin UI) to obtain a `client_id`.
--   **Redirect URI**: The `redirect_uri` used in the flow **must exactly match** one of the URIs registered in the Looker OAuth application settings.
--   **Embedded Domain Allowlist**: The origin of the application **must** be added to the **Embedded Domain Allowlist** (Admin > Embed) to allow CORS headers.
+| Setting | Location in Looker | Requirement |
+| :--- | :--- | :--- |
+| **Looker API CORS** | `Admin > Labs` | Enabled |
+| **OAuth Client App** | `Admin > Platform > API Explorer` or Admin UI | Register `client_guid`, exact `redirect_uri`, `enabled: true` |
+| **Embedded Domain Allowlist** | `Admin > Embed` | Add application origin (e.g. `https://localhost:3000` or production domain) |
+| **HTTPS Protocol** | Application Server | Required for Web Crypto API (`window.crypto.subtle`) and PKCE validation |
 
-### Security Requirements
--   **HTTPS**: The application **must** be served over HTTPS. Looker will reject OAuth requests from non-secure origins (except `localhost` in some development contexts).
--   **PKCE Implementation**: Use a robust library or the Looker SDK to handle the `code_verifier` and `code_challenge` logic to avoid implementation errors.
+---
 
-## 4. Why Use This Pattern?
+## 3. Core Implementation Rules for Agents
 
--   **Zero Backend**: No server-side code is needed to handle authentication or proxy requests.
--   **User-Centric Security**: The user authenticates directly with Looker; the application never sees the user's credentials.
--   **Full API Access**: The application acts on behalf of the logged-in user, inheriting their specific Looker permissions and data access.
+When implementing or modifying Looker CORS OAuth applications, you **MUST** follow these directives:
 
-## 5. Troubleshooting Common Pitfalls
+### 1. Token Persistence Across Navigations (`PersistentOAuthSession`)
+`@looker/sdk-rtl`'s default `OAuthSession` keeps tokens strictly in JavaScript memory. You **MUST** subclass `OAuthSession` to persist `access_token`, `refresh_token`, and `expiresAt` in `sessionStorage`. Otherwise, page refreshes or route changes will lose the active session.
 
--   **Invalid Client ID**: Ensure the `client_id` is correct and the application is properly registered in the specific Looker instance.
--   **Redirect URI Mismatch**: The most common error. Check for trailing slashes, protocol (http vs https), and exact path matching.
--   **Browser Crypto API**: PKCE relies on `window.crypto`. If the app is not on a "secure context" (HTTPS), these APIs may be unavailable.
--   **CORS Preflight (OPTIONS)**: Ensure the application origin is in the Looker **Embedded Domain Allowlist**.
+### 2. Subpath Imports for `@looker/sdk`
+Due to upstream TypeScript interface re-export issues in the root package, **DO NOT** import directly from `@looker/sdk` when using bundlers like Vite or esbuild. Always import from:
+```typescript
+import { Looker40SDK } from '@looker/sdk/lib/4.0/methods';
+import type { IUser, IWriteQuery } from '@looker/sdk/lib/4.0/models';
+import { BrowserServices, OAuthSession, AuthToken } from '@looker/sdk-rtl';
+```
+
+### 3. Client-Side SPA Navigation in Callback Handlers
+After redeeming the authorization code in the `/callback` handler, transition to the target app view using **client-side state navigation** (`window.history.replaceState` or React Router state). **DO NOT** perform a hard browser reload (`window.location.replace`), which resets in-memory React state.
+
+### 4. Declarative Semantic Query Binding
+Use a custom React hook (such as `useLookerQuery`) that dispatches `sdk.run_inline_query({ result_format: 'json', body: queryPayload })` to bind Looker dimensions and measures dynamically to UI charts and tables.
+
+### 5. Strict `redirect_uri` Validation (No Wildcards)
+Looker OAuth client applications (`OauthClientApp`) enforce strict character-for-character equality (`==`) on `redirect_uri` during both `/auth` and `/api/token`. Wildcards (`*`), regexes, trailing slash discrepancies, and dynamic subpaths are rejected with `400 Bad Request` (only RFC 8252 loopback IP literals `127.0.0.1` / `[::1]` allow dynamic port matching). Register an array of static callbacks in `redirect_uris: string[]` or pass dynamic deep-link destinations via the OAuth `state` parameter / `sessionStorage`.
+
+### 6. Two-Layer OAuth Boundary (`cors_api` vs BigQuery `OAuthUserState`)
+Calling `create_embed_url_as_me` (`POST /api/4.0/embed/token_url/me`) with a PKCE token only establishes the Looker `:embed_user` session; it does **not** populate database OAuth tokens in `Looker::Model::OAuthUserState`. If the embedded dashboard queries a BigQuery OAuth connection, in-iframe redirects to `accounts.google.com` will be blocked by Google's `CSP: frame-ancestors` header (`403`). Seed the user's Google OAuth tokens into Looker via `create_oauth_application_user_state` (`POST /api/4.0/external_oauth_applications/user_state`) before mounting the iframe (see [troubleshooting.md](references/troubleshooting.md)).
+
+---
+
+## 4. Reference Guides & Code Templates
+
+For complete code implementations and deep troubleshooting guides, see the following references:
+
+* **[OAuth PKCE Architecture & Sequence](references/oauth_pkce_architecture.md)**: End-to-end token exchange diagrams and security considerations.
+* **[TypeScript SDK Code Patterns](references/sdk_code_patterns.md)**: Production-ready code templates for `PersistentOAuthSession`, `LookerAuthProvider`, `OAuthCallback`, and `useLookerQuery`.
+* **[Troubleshooting & Common Pitfalls](references/troubleshooting.md)**: Fixes for redirect URI mismatches, CORS preflight 403 errors, token loss, and bundler resolution bugs.
